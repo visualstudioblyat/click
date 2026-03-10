@@ -37,8 +37,6 @@ export interface ClickConfig {
   fixed_y: number;
   hotkey: string;
   humanizer_enabled: boolean;
-  sound_enabled: boolean;
-  sound_preset: string;
   start_delay_ms: number;
   stop_after_ms: number;
   jitter_distribution: 'uniform' | 'gaussian' | 'poisson';

@@ -52,8 +52,6 @@ pub struct ClickConfig {
     pub fixed_y: i32,
     pub hotkey: String,
     pub humanizer_enabled: bool,
-    pub sound_enabled: bool,
-    pub sound_preset: String,
     // Schedule
     #[serde(default)]
     pub start_delay_ms: u64,
@@ -119,8 +117,6 @@ impl Default for ClickConfig {
             fixed_y: 0,
             hotkey: "F6".into(),
             humanizer_enabled: true,
-            sound_enabled: true,
-            sound_preset: "mechanical".into(),
             start_delay_ms: 0,
             stop_after_ms: 0,
             jitter_distribution: "uniform".into(),

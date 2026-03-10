@@ -8,7 +8,6 @@ import { ProgressRing } from './ProgressRing';
 import { useClickStore } from '../store/clickStore';
 import { useShallow } from 'zustand/react/shallow';
 import { formatDuration } from '../lib/format';
-const SOUND_PRESETS = ['mechanical', 'typewriter', 'bubble', 'laser', 'asmr'] as const;
 const IS_TAURI = '__TAURI_INTERNALS__' in window;
 
 export function ControlPanel() {
@@ -296,24 +295,6 @@ export function ControlPanel() {
           >
             {bindingHotkey ? 'PRESS A KEY...' : config.hotkey}
           </motion.button>
-        </div>
-
-        {/* Sound preset */}
-        <div>
-          <div className="mono text-secondary" style={{ ...labelStyle, marginBottom: 6 }}>SOUND</div>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {SOUND_PRESETS.map((preset) => (
-              <motion.button
-                key={preset}
-                className={`btn ${config.sound_preset === preset ? 'btn-green' : ''}`}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setConfig({ sound_preset: preset })}
-                style={{ fontSize: 9, padding: '4px 8px', textTransform: 'uppercase' }}
-              >
-                {preset}
-              </motion.button>
-            ))}
-          </div>
         </div>
 
         {/* Humanizer toggle */}

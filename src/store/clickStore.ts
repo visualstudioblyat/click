@@ -61,8 +61,6 @@ const defaultConfig: ClickConfig = {
   fixed_y: 0,
   hotkey: 'F6',
   humanizer_enabled: true,
-  sound_enabled: true,
-  sound_preset: 'mechanical',
   start_delay_ms: 0,
   stop_after_ms: 0,
   jitter_distribution: 'gaussian',

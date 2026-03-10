@@ -95,8 +95,6 @@ export function useTauriEngine() {
     config.fixed_x,
     config.fixed_y,
     config.humanizer_enabled,
-    config.sound_enabled,
-    config.sound_preset,
     config.start_delay_ms,
     config.stop_after_ms,
     config.jitter_distribution,
