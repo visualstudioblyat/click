@@ -1,5 +1,7 @@
 # Click
 
+![screenshot](screenshot.png)
+
 An autoclicker for Windows, built with Tauri v2, React, and Rust.
 
 It does what OP Auto Clicker does but with a real UI -- live CPS charts, click heatmaps,
@@ -15,7 +17,7 @@ Default hotkey is F6. You can rebind it to any key, including mouse4/mouse5.
 
 ## Download
 
-Grab the latest `.msi` from [Releases](../../releases).
+Grab the latest exe from [Releases](../../releases).
 
 ## Building from source
 
@@ -24,7 +26,7 @@ Requires Node.js 18+ and Rust 1.75+.
 ```
 npm install
 npm run tauri dev     # dev mode with hot reload
-npm run tauri build   # production build (.msi output)
+npm run tauri build   # production build (.exe output)
 ```
 
 ## Keybinds
