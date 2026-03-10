@@ -22,16 +22,18 @@ export function useTauriEngine() {
       store.updateTelemetry(t);
       store.pushCps(t.cps);
 
-      // Add recent clicks from backend
-      if (t.recent_clicks && t.recent_clicks.length > 0) {
-        const last = t.recent_clicks[t.recent_clicks.length - 1];
+      // Add click from latest position if available
+      if (t.click_positions && t.click_positions.length > 0) {
+        const [x, y] = t.click_positions[t.click_positions.length - 1];
         store.addClick({
-          id: last.id,
-          timestamp: last.timestamp,
-          x: 0,
-          y: 0,
-          interval_ms: last.interval_ms,
-          hash: last.hash,
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+          x,
+          y,
+          interval_ms: t.recent_intervals.length > 0
+            ? t.recent_intervals[t.recent_intervals.length - 1]
+            : 0,
+          hash: '',
         });
       }
     });
@@ -40,7 +42,7 @@ export function useTauriEngine() {
       useClickStore.getState().pushCandle(event.payload);
     });
 
-    // Listen for F6 hotkey toggle from Rust
+    // Listen for hotkey toggle from Rust
     const unlistenHotkey = listen('hotkey-toggle', () => {
       const store = useClickStore.getState();
       if (store.status === 'running') {
@@ -79,11 +81,33 @@ export function useTauriEngine() {
     }
   }, [status]);
 
-  // Push config updates to Rust
+  // Push config updates to Rust — all fields that affect engine behavior
   useEffect(() => {
     if (!IS_TAURI || status !== 'running') return;
     invoke('update_config', { config }).catch(console.error);
-  }, [config.target_cps, config.button, config.humanizer_enabled, config.click_type, config.repeat_mode, config.repeat_count, config.location_mode, config.fixed_x, config.fixed_y]);
+  }, [
+    config.target_cps,
+    config.button,
+    config.click_type,
+    config.repeat_mode,
+    config.repeat_count,
+    config.location_mode,
+    config.fixed_x,
+    config.fixed_y,
+    config.humanizer_enabled,
+    config.sound_enabled,
+    config.sound_preset,
+    config.start_delay_ms,
+    config.stop_after_ms,
+    config.jitter_distribution,
+    config.position_jitter_radius,
+    config.mode,
+    config.keyboard_key,
+    config.hold_duration_ms,
+    config.drag_to_x,
+    config.drag_to_y,
+    config.sequence,
+  ]);
 
   return IS_TAURI;
 }

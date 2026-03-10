@@ -5,9 +5,7 @@ import type {
   TelemetrySnapshot,
   ClickEvent,
   CandleData,
-  PidState,
-  BayesianState,
-  FatigueState,
+  Profile,
 } from '../types';
 
 interface ClickStore {
@@ -21,6 +19,9 @@ interface ClickStore {
   cpsHistory: number[];
   candles: CandleData[];
 
+  // Profiles
+  profiles: Profile[];
+
   // Actions
   setStatus: (status: EngineStatus) => void;
   setConfig: (config: Partial<ClickConfig>) => void;
@@ -29,43 +30,24 @@ interface ClickStore {
   pushCps: (cps: number) => void;
   pushCandle: (candle: CandleData) => void;
   reset: () => void;
-}
 
-const defaultPid: PidState = { p: 0, i: 0, d: 0, output: 0, error: 0 };
-const defaultBayesian: BayesianState = { alpha: 1, beta: 1, optimal_interval_ms: 100, confidence: 0 };
-const defaultFatigue: FatigueState = {
-  tendon_stress: 0,
-  recovery_pct: 1,
-  spring_displacement: 0,
-  damper_velocity: 0,
-  rupture_risk: 0,
-};
+  // Profile actions
+  addProfile: (name: string) => void;
+  removeProfile: (name: string) => void;
+  loadProfile: (name: string) => void;
+}
 
 const defaultTelemetry: TelemetrySnapshot = {
   cps: 0,
   target_cps: 10,
   total_clicks: 0,
   session_duration_ms: 0,
-  entropy: 0,
-  pid_output: defaultPid,
-  bayesian: defaultBayesian,
-  fatigue: defaultFatigue,
-  brier_score: 0.5,
-  seismograph: 0,
-  regime: 'STABLE',
-  forecast_cps: 0,
-  provenance_valid: true,
-  chain_length: 0,
-  neural_loss: 1,
-  monte_carlo_p50: 0,
-  monte_carlo_p5: 0,
-  monte_carlo_p95: 0,
-  fft_dominant_freq: 0,
-  fft_spectrum: [],
-  osha_strain_index: 0,
-  osha_break_needed: false,
+  min_cps: 0,
+  max_cps: 0,
+  avg_cps: 0,
+  clicks_per_min: 0,
   recent_intervals: [],
-  recent_clicks: [],
+  click_positions: [],
 };
 
 const defaultConfig: ClickConfig = {
@@ -81,15 +63,41 @@ const defaultConfig: ClickConfig = {
   humanizer_enabled: true,
   sound_enabled: true,
   sound_preset: 'mechanical',
+  start_delay_ms: 0,
+  stop_after_ms: 0,
+  jitter_distribution: 'gaussian',
+  position_jitter_radius: 0,
+  mode: 'click',
+  keyboard_key: '',
+  hold_duration_ms: 100,
+  drag_to_x: 0,
+  drag_to_y: 0,
+  sequence: [],
 };
 
-export const useClickStore = create<ClickStore>((set) => ({
+function loadProfiles(): Profile[] {
+  try {
+    const raw = localStorage.getItem('click_profiles');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveProfiles(profiles: Profile[]) {
+  try {
+    localStorage.setItem('click_profiles', JSON.stringify(profiles));
+  } catch { /* noop */ }
+}
+
+export const useClickStore = create<ClickStore>((set, get) => ({
   status: 'idle',
   config: defaultConfig,
   telemetry: defaultTelemetry,
   clickHistory: [],
   cpsHistory: [],
   candles: [],
+  profiles: loadProfiles(),
 
   setStatus: (status) => set({ status }),
 
@@ -122,4 +130,23 @@ export const useClickStore = create<ClickStore>((set) => ({
       cpsHistory: [],
       candles: [],
     }),
+
+  addProfile: (name) => {
+    const config = { ...get().config };
+    const profile: Profile = { name, config, createdAt: Date.now() };
+    const profiles = [...get().profiles.filter((p) => p.name !== name), profile];
+    saveProfiles(profiles);
+    set({ profiles });
+  },
+
+  removeProfile: (name) => {
+    const profiles = get().profiles.filter((p) => p.name !== name);
+    saveProfiles(profiles);
+    set({ profiles });
+  },
+
+  loadProfile: (name) => {
+    const profile = get().profiles.find((p) => p.name === name);
+    if (profile) set({ config: { ...profile.config } });
+  },
 }));

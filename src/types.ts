@@ -7,54 +7,23 @@ export interface ClickEvent {
   hash: string;
 }
 
+export interface SequenceStep {
+  action: 'click_left' | 'click_right' | 'click_middle' | 'double_click' | 'key' | 'wait';
+  delay_ms: number;
+  key?: string;
+}
+
 export interface TelemetrySnapshot {
   cps: number;
   target_cps: number;
   total_clicks: number;
   session_duration_ms: number;
-  entropy: number;
-  pid_output: PidState;
-  bayesian: BayesianState;
-  fatigue: FatigueState;
-  brier_score: number;
-  seismograph: number;
-  regime: string;
-  forecast_cps: number;
-  provenance_valid: boolean;
-  chain_length: number;
-  neural_loss: number;
-  monte_carlo_p50: number;
-  monte_carlo_p5: number;
-  monte_carlo_p95: number;
-  fft_dominant_freq: number;
-  fft_spectrum: number[];
-  osha_strain_index: number;
-  osha_break_needed: boolean;
+  min_cps: number;
+  max_cps: number;
+  avg_cps: number;
+  clicks_per_min: number;
   recent_intervals: number[];
-  recent_clicks: { id: string; timestamp: number; interval_ms: number; hash: string }[];
-}
-
-export interface PidState {
-  p: number;
-  i: number;
-  d: number;
-  output: number;
-  error: number;
-}
-
-export interface BayesianState {
-  alpha: number;
-  beta: number;
-  optimal_interval_ms: number;
-  confidence: number;
-}
-
-export interface FatigueState {
-  tendon_stress: number;
-  recovery_pct: number;
-  spring_displacement: number;
-  damper_velocity: number;
-  rupture_risk: number;
+  click_positions: [number, number][];
 }
 
 export interface ClickConfig {
@@ -69,10 +38,18 @@ export interface ClickConfig {
   hotkey: string;
   humanizer_enabled: boolean;
   sound_enabled: boolean;
-  sound_preset: SoundPreset;
+  sound_preset: string;
+  start_delay_ms: number;
+  stop_after_ms: number;
+  jitter_distribution: 'uniform' | 'gaussian' | 'poisson';
+  position_jitter_radius: number;
+  mode: 'click' | 'keyboard' | 'hold' | 'drag';
+  keyboard_key: string;
+  hold_duration_ms: number;
+  drag_to_x: number;
+  drag_to_y: number;
+  sequence: SequenceStep[];
 }
-
-export type SoundPreset = 'mechanical' | 'typewriter' | 'bubble' | 'laser' | 'asmr';
 
 export type EngineStatus = 'idle' | 'running' | 'paused' | 'calibrating';
 
@@ -84,17 +61,8 @@ export interface CandleData {
   close: number;
 }
 
-export interface OshaReport {
-  cumulative_clicks: number;
-  session_minutes: number;
-  strain_index: number;
-  break_recommended_at: number;
-  violations: OshaViolation[];
-}
-
-export interface OshaViolation {
-  timestamp: number;
-  type: string;
-  severity: 'warning' | 'critical';
-  description: string;
+export interface Profile {
+  name: string;
+  config: ClickConfig;
+  createdAt: number;
 }

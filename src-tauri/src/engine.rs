@@ -1,50 +1,27 @@
 use std::sync::Arc;
 use std::time::Instant;
 use parking_lot::Mutex;
+use rand::Rng;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::time::{sleep, Duration};
 
-use crate::bayesian::BayesianOptimizer;
-use crate::brier::BrierTracker;
-use crate::bocpd::Bocpd;
 use crate::clicker::{self, MouseButton};
-use crate::entropy;
-use crate::fatigue::FatigueModel;
-use crate::fourier;
-use crate::montecarlo::MonteCarlo;
-use crate::neural::NeuralNet;
-use crate::osha::OshaMonitor;
-use crate::pid::PidController;
-use crate::provenance::ProvenanceChain;
-use crate::weather::HoltWinters;
+use crate::keyboard;
+use crate::drag;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TelemetrySnapshot {
     pub cps: f64,
     pub target_cps: f64,
     pub total_clicks: u64,
-    pub session_duration_ms: f64,
-    pub entropy: f64,
-    pub pid_output: crate::pid::PidState,
-    pub bayesian: crate::bayesian::BayesianState,
-    pub fatigue: crate::fatigue::FatigueState,
-    pub brier_score: f64,
-    pub seismograph: f64,
-    pub regime: String,
-    pub forecast_cps: f64,
-    pub provenance_valid: bool,
-    pub chain_length: usize,
-    pub neural_loss: f64,
-    pub monte_carlo_p50: f64,
-    pub monte_carlo_p5: f64,
-    pub monte_carlo_p95: f64,
-    pub fft_dominant_freq: f64,
-    pub fft_spectrum: Vec<f64>,
-    pub osha_strain_index: f64,
-    pub osha_break_needed: bool,
+    pub session_duration_ms: u64,
+    pub min_cps: f64,
+    pub max_cps: f64,
+    pub avg_cps: f64,
+    pub clicks_per_min: f64,
     pub recent_intervals: Vec<f64>,
-    pub recent_clicks: Vec<crate::provenance::ClickRecord>,
+    pub click_positions: Vec<(i32, i32)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,6 +31,13 @@ pub struct CandleData {
     pub high: f64,
     pub low: f64,
     pub close: f64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SequenceStep {
+    pub action: String, // "click_left", "click_right", "click_middle", "double_click", "key", "wait"
+    pub delay_ms: u64,
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -70,7 +54,36 @@ pub struct ClickConfig {
     pub humanizer_enabled: bool,
     pub sound_enabled: bool,
     pub sound_preset: String,
+    // Schedule
+    #[serde(default)]
+    pub start_delay_ms: u64,
+    #[serde(default)]
+    pub stop_after_ms: u64,
+    // Anti-detection
+    #[serde(default = "default_jitter_distribution")]
+    pub jitter_distribution: String,
+    #[serde(default)]
+    pub position_jitter_radius: i32,
+    // Mode
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    // Keyboard
+    #[serde(default)]
+    pub keyboard_key: String,
+    // Hold/Drag
+    #[serde(default)]
+    pub hold_duration_ms: u64,
+    #[serde(default)]
+    pub drag_to_x: i32,
+    #[serde(default)]
+    pub drag_to_y: i32,
+    // Sequence
+    #[serde(default)]
+    pub sequence: Vec<SequenceStep>,
 }
+
+fn default_jitter_distribution() -> String { "uniform".into() }
+fn default_mode() -> String { "click".into() }
 
 #[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -108,54 +121,62 @@ impl Default for ClickConfig {
             humanizer_enabled: true,
             sound_enabled: true,
             sound_preset: "mechanical".into(),
+            start_delay_ms: 0,
+            stop_after_ms: 0,
+            jitter_distribution: "uniform".into(),
+            position_jitter_radius: 0,
+            mode: "click".into(),
+            keyboard_key: String::new(),
+            hold_duration_ms: 0,
+            drag_to_x: 0,
+            drag_to_y: 0,
+            sequence: Vec::new(),
         }
     }
 }
 
 pub struct Engine {
-    config: ClickConfig,
-    running: bool,
-
-    // Analysis engines
-    pid: PidController,
-    bayesian: BayesianOptimizer,
-    neural: NeuralNet,
-    bocpd: Bocpd,
-    brier: BrierTracker,
-    provenance: ProvenanceChain,
-    weather: HoltWinters,
-    fatigue: FatigueModel,
-    osha: OshaMonitor,
+    pub config: ClickConfig,
+    pub running: bool,
 
     // Click tracking
     intervals: Vec<f64>,
     cps_history: Vec<f64>,
     last_click_time: Option<Instant>,
-    tick_count: u64,
-    session_start: Instant,
+    pub tick_count: u64,
+    pub session_start: Instant,
 
     // CPS measurement
     clicks_in_window: Vec<Instant>,
+
+    // Statistics
+    min_cps: f64,
+    max_cps: f64,
+    cps_sum: f64,
+    cps_samples: u64,
+
+    // Heatmap
+    click_positions: Vec<(i32, i32)>,
+
+    // Schedule tracking
+    start_delay_done: bool,
 }
 
 impl Engine {
     pub fn new(config: ClickConfig) -> Self {
         Self {
-            pid: PidController::new(),
-            bayesian: BayesianOptimizer::new(config.target_cps),
-            neural: NeuralNet::new(),
-            bocpd: Bocpd::new(),
-            brier: BrierTracker::new(),
-            provenance: ProvenanceChain::new(),
-            weather: HoltWinters::new(),
-            fatigue: FatigueModel::new(),
-            osha: OshaMonitor::new(),
             intervals: Vec::new(),
             cps_history: Vec::new(),
             last_click_time: None,
             tick_count: 0,
             session_start: Instant::now(),
             clicks_in_window: Vec::new(),
+            min_cps: f64::MAX,
+            max_cps: 0.0,
+            cps_sum: 0.0,
+            cps_samples: 0,
+            click_positions: Vec::new(),
+            start_delay_done: false,
             config,
             running: false,
         }
@@ -163,14 +184,60 @@ impl Engine {
 
     fn measure_cps(&mut self) -> f64 {
         let now = Instant::now();
-        // Keep clicks from last 1 second
         self.clicks_in_window.retain(|t| now.duration_since(*t).as_secs_f64() < 1.0);
         self.clicks_in_window.len() as f64
     }
 
+    fn record_cursor_pos(&mut self) {
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        use windows::Win32::Foundation::POINT;
+        let mut pt = POINT::default();
+        unsafe { let _ = GetCursorPos(&mut pt); }
+        if self.click_positions.len() >= 500 {
+            self.click_positions.remove(0);
+        }
+        self.click_positions.push((pt.x, pt.y));
+    }
+
+    fn update_stats(&mut self, cps: f64) {
+        if cps > 0.0 {
+            if cps < self.min_cps { self.min_cps = cps; }
+            if cps > self.max_cps { self.max_cps = cps; }
+            self.cps_sum += cps;
+            self.cps_samples += 1;
+        }
+    }
+
+    fn get_position(&self) -> Option<(i32, i32)> {
+        match self.config.location_mode {
+            LocationMode::Fixed => Some((self.config.fixed_x, self.config.fixed_y)),
+            LocationMode::Cursor => None,
+        }
+    }
+
+    fn apply_position_jitter(&self, pos: Option<(i32, i32)>) -> Option<(i32, i32)> {
+        let r = self.config.position_jitter_radius;
+        if r == 0 { return pos; }
+
+        let mut rng = rand::thread_rng();
+        let dx = rng.gen_range(-r..=r);
+        let dy = rng.gen_range(-r..=r);
+
+        match pos {
+            Some((x, y)) => Some((x + dx, y + dy)),
+            None => {
+                // get current cursor pos and jitter it
+                use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+                use windows::Win32::Foundation::POINT;
+                let mut pt = POINT::default();
+                unsafe { let _ = GetCursorPos(&mut pt); }
+                Some((pt.x + dx, pt.y + dy))
+            }
+        }
+    }
+
     fn do_click(&mut self) {
         let now = Instant::now();
-        let now_ms = now.duration_since(self.session_start).as_secs_f64() * 1000.0;
 
         // Measure interval
         if let Some(last) = self.last_click_time {
@@ -179,144 +246,131 @@ impl Engine {
             if self.intervals.len() > 256 {
                 self.intervals.remove(0);
             }
-
-            // Feed all engines
-            self.bayesian.observe(interval);
-            self.bocpd.observe(interval);
         }
         self.last_click_time = Some(now);
         self.clicks_in_window.push(now);
 
-        // Determine click position
-        let position = match self.config.location_mode {
-            LocationMode::Fixed => Some((self.config.fixed_x, self.config.fixed_y)),
-            LocationMode::Cursor => None,
-        };
+        let position = self.apply_position_jitter(self.get_position());
 
-        // Actual click (single or double)
         match self.config.click_type {
             ClickType::Single => clicker::send_click_at(self.config.button, position),
             ClickType::Double => clicker::send_double_click_at(self.config.button, position),
         }
 
-        // Record in provenance chain
-        let interval = self.intervals.last().copied().unwrap_or(0.0);
-        self.provenance.record_click(now_ms, interval);
+        self.record_cursor_pos();
 
-        // OSHA tracking
         let cps = self.measure_cps();
-        self.osha.record_click(now_ms, cps);
+        self.update_stats(cps);
 
-        // Fatigue
-        self.fatigue.tick(true, interval / 1000.0);
+        self.tick_count += 1;
+    }
 
-        // Weather
-        self.weather.observe(cps);
+    fn do_keyboard(&mut self) {
+        let now = Instant::now();
+        if let Some(last) = self.last_click_time {
+            let interval = now.duration_since(last).as_secs_f64() * 1000.0;
+            self.intervals.push(interval);
+            if self.intervals.len() > 256 { self.intervals.remove(0); }
+        }
+        self.last_click_time = Some(now);
+        self.clicks_in_window.push(now);
 
-        // Brier scoring
-        let target_interval = 1000.0 / self.config.target_cps;
-        let predicted_success = self.bayesian.state().confidence;
-        let actual_success = if interval > 0.0 && (interval - target_interval).abs() < target_interval * 0.15 {
-            1.0
+        keyboard::send_key(&self.config.keyboard_key);
+
+        let cps = self.measure_cps();
+        self.update_stats(cps);
+        self.tick_count += 1;
+    }
+
+    fn do_hold(&mut self) {
+        let now = Instant::now();
+        if let Some(last) = self.last_click_time {
+            let interval = now.duration_since(last).as_secs_f64() * 1000.0;
+            self.intervals.push(interval);
+            if self.intervals.len() > 256 { self.intervals.remove(0); }
+        }
+        self.last_click_time = Some(now);
+        self.clicks_in_window.push(now);
+
+        let position = self.apply_position_jitter(self.get_position());
+
+        // Move to position if fixed
+        if let Some((x, y)) = position {
+            clicker::move_to(x, y);
+        }
+
+        let btn = self.config.button;
+        let dur = self.config.hold_duration_ms;
+        drag::hold_button(btn);
+        if dur > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(dur));
+            drag::release_button(btn);
         } else {
-            0.0
-        };
-        self.brier.observe(predicted_success, actual_success);
+            drag::release_button(btn);
+        }
 
+        self.record_cursor_pos();
+
+        let cps = self.measure_cps();
+        self.update_stats(cps);
+        self.tick_count += 1;
+    }
+
+    fn do_drag(&mut self) {
+        let now = Instant::now();
+        if let Some(last) = self.last_click_time {
+            let interval = now.duration_since(last).as_secs_f64() * 1000.0;
+            self.intervals.push(interval);
+            if self.intervals.len() > 256 { self.intervals.remove(0); }
+        }
+        self.last_click_time = Some(now);
+        self.clicks_in_window.push(now);
+
+        let from = match self.config.location_mode {
+            LocationMode::Fixed => (self.config.fixed_x, self.config.fixed_y),
+            LocationMode::Cursor => {
+                use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+                use windows::Win32::Foundation::POINT;
+                let mut pt = POINT::default();
+                unsafe { let _ = GetCursorPos(&mut pt); }
+                (pt.x, pt.y)
+            }
+        };
+        let to = (self.config.drag_to_x, self.config.drag_to_y);
+
+        drag::drag_to(self.config.button, from, to, 20);
+
+        self.record_cursor_pos();
+
+        let cps = self.measure_cps();
+        self.update_stats(cps);
         self.tick_count += 1;
     }
 
     fn compute_telemetry(&mut self) -> TelemetrySnapshot {
         let cps = self.measure_cps();
         let now = Instant::now();
-        let session_ms = now.duration_since(self.session_start).as_secs_f64() * 1000.0;
-
-        // PID
-        let dt = if cps > 0.0 { 1.0 / cps } else { 0.1 };
-        let pid_state = self.pid.update(self.config.target_cps, cps, dt);
-
-        // Entropy
-        let ent = entropy::shannon_entropy(&self.intervals);
-
-        // FFT
-        let spectrum = if self.intervals.len() >= 8 {
-            fourier::fft_magnitudes(&self.intervals)
-        } else {
-            vec![]
-        };
-        let sample_rate = if cps > 0.0 { cps } else { 10.0 };
-        let dominant_freq = fourier::dominant_frequency(&spectrum, sample_rate);
-
-        // Trim spectrum to 32 bins for frontend
-        let fft_display: Vec<f64> = if spectrum.len() > 32 {
-            spectrum[..32].to_vec()
-        } else {
-            spectrum
-        };
-
-        // Neural net
-        let nn_input = [
-            cps / self.config.target_cps.max(1.0),
-            ent,
-            pid_state.error / self.config.target_cps.max(1.0),
-            self.bayesian.state().confidence,
-        ];
-        let _jitter = self.neural.forward(&nn_input);
-        // Train: target jitter should correlate with entropy
-        self.neural.train(&nn_input, ent * 0.5);
-
-        // Monte Carlo
-        let trend = pid_state.error;
-        let vol = if self.intervals.len() > 2 {
-            let mean = self.intervals.iter().sum::<f64>() / self.intervals.len() as f64;
-            (self.intervals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / self.intervals.len() as f64).sqrt() * 0.01
-        } else {
-            0.5
-        };
-        let mc = MonteCarlo::simulate(cps, trend, vol, 30);
-
-        // Seismograph: standard deviation of recent intervals
-        let seismograph = if self.intervals.len() > 2 {
-            let mean = self.intervals.iter().sum::<f64>() / self.intervals.len() as f64;
-            let variance = self.intervals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / self.intervals.len() as f64;
-            variance.sqrt() / mean.max(1.0)
-        } else {
-            0.0
-        };
+        let session_ms = now.duration_since(self.session_start).as_millis() as u64;
 
         self.cps_history.push(cps);
         if self.cps_history.len() > 300 {
             self.cps_history.remove(0);
         }
 
-        // Fatigue recovery tick (no click)
-        self.fatigue.tick(false, dt);
+        let avg_cps = if self.cps_samples > 0 { self.cps_sum / self.cps_samples as f64 } else { 0.0 };
+        let clicks_per_min = if session_ms > 0 { self.tick_count as f64 / (session_ms as f64 / 60_000.0) } else { 0.0 };
 
         TelemetrySnapshot {
             cps,
             target_cps: self.config.target_cps,
-            total_clicks: self.osha.total_clicks(),
+            total_clicks: self.tick_count,
             session_duration_ms: session_ms,
-            entropy: ent,
-            pid_output: pid_state,
-            bayesian: self.bayesian.state(),
-            fatigue: self.fatigue.state(),
-            brier_score: self.brier.score(),
-            seismograph,
-            regime: self.bocpd.regime.to_string(),
-            forecast_cps: self.weather.forecast.max(0.0),
-            provenance_valid: self.provenance.verify(),
-            chain_length: self.provenance.len(),
-            neural_loss: self.neural.loss,
-            monte_carlo_p50: mc.p50,
-            monte_carlo_p5: mc.p5,
-            monte_carlo_p95: mc.p95,
-            fft_dominant_freq: dominant_freq,
-            fft_spectrum: fft_display,
-            osha_strain_index: self.osha.strain_index(),
-            osha_break_needed: self.osha.break_needed(),
+            min_cps: if self.min_cps == f64::MAX { 0.0 } else { self.min_cps },
+            max_cps: self.max_cps,
+            avg_cps,
+            clicks_per_min,
             recent_intervals: self.intervals.clone(),
-            recent_clicks: self.provenance.recent(8).to_vec(),
+            click_positions: self.click_positions.clone(),
         }
     }
 }
@@ -327,65 +381,186 @@ pub fn create_engine(config: ClickConfig) -> SharedEngine {
     Arc::new(Mutex::new(Engine::new(config)))
 }
 
+/// Generate jitter based on distribution type
+fn compute_jitter(distribution: &str, base_interval_ms: f64, humanizer_enabled: bool) -> f64 {
+    if !humanizer_enabled { return 0.0; }
+
+    let mut rng = rand::thread_rng();
+    let scale = base_interval_ms * 0.15; // +/- 15%
+
+    match distribution {
+        "gaussian" => {
+            // Box-Muller transform
+            let u1: f64 = rng.gen::<f64>().max(1e-10);
+            let u2: f64 = rng.gen::<f64>();
+            let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+            z * scale * 0.33 // ~99% within +/- scale
+        }
+        "poisson" => {
+            // Inverse transform sampling for exponential-like jitter
+            let u: f64 = rng.gen::<f64>().max(1e-10);
+            let lambda = 1.0 / scale.max(1.0);
+            (-u.ln() / lambda) - scale // center around 0
+        }
+        _ => {
+            // uniform
+            rng.gen_range(-scale..scale)
+        }
+    }
+}
+
+/// Execute a sequence step, returns true if a "click" action was performed
+fn execute_sequence_step(step: &SequenceStep, engine: &SharedEngine) {
+    match step.action.as_str() {
+        "click_left" => {
+            let mut eng = engine.lock();
+            let pos = eng.apply_position_jitter(eng.get_position());
+            clicker::send_click_at(MouseButton::Left, pos);
+            eng.record_cursor_pos();
+            eng.clicks_in_window.push(Instant::now());
+            eng.tick_count += 1;
+            let cps = eng.measure_cps();
+            eng.update_stats(cps);
+        }
+        "click_right" => {
+            let mut eng = engine.lock();
+            let pos = eng.apply_position_jitter(eng.get_position());
+            clicker::send_click_at(MouseButton::Right, pos);
+            eng.record_cursor_pos();
+            eng.clicks_in_window.push(Instant::now());
+            eng.tick_count += 1;
+            let cps = eng.measure_cps();
+            eng.update_stats(cps);
+        }
+        "click_middle" => {
+            let mut eng = engine.lock();
+            let pos = eng.apply_position_jitter(eng.get_position());
+            clicker::send_click_at(MouseButton::Middle, pos);
+            eng.record_cursor_pos();
+            eng.clicks_in_window.push(Instant::now());
+            eng.tick_count += 1;
+            let cps = eng.measure_cps();
+            eng.update_stats(cps);
+        }
+        "double_click" => {
+            let mut eng = engine.lock();
+            let pos = eng.apply_position_jitter(eng.get_position());
+            clicker::send_double_click_at(MouseButton::Left, pos);
+            eng.record_cursor_pos();
+            eng.clicks_in_window.push(Instant::now());
+            eng.tick_count += 1;
+            let cps = eng.measure_cps();
+            eng.update_stats(cps);
+        }
+        "key" => {
+            if let Some(ref k) = step.key {
+                keyboard::send_key(k);
+                let mut eng = engine.lock();
+                eng.tick_count += 1;
+            }
+        }
+        "wait" => {
+            // delay_ms handles the wait
+        }
+        _ => {}
+    }
+}
+
 /// Main click loop — runs on a tokio task
 pub async fn run_click_loop(engine: SharedEngine, app: AppHandle) {
     let mut candle_open = 0.0_f64;
     let mut candle_high = 0.0_f64;
     let mut candle_low = f64::MAX;
     let mut candle_ticks = 0u32;
-    let candle_period = 25; // candle every 25 ticks (~5 seconds)
+    let candle_period = 25;
     let mut telemetry_counter = 0u32;
+    let mut session_started = false;
 
     loop {
-        let (should_run, interval_ms, target_cps, repeat_mode, repeat_count, total_clicks) = {
+        let (should_run, interval_ms, config_snapshot) = {
             let eng = engine.lock();
             (
                 eng.running,
                 1000.0 / eng.config.target_cps.max(0.1),
-                eng.config.target_cps,
-                eng.config.repeat_mode,
-                eng.config.repeat_count,
-                eng.tick_count,
+                eng.config.clone(),
             )
         };
 
         if !should_run {
+            session_started = false;
             sleep(Duration::from_millis(50)).await;
             continue;
         }
 
-        // Check if we've hit the repeat count
-        if repeat_mode == RepeatMode::Count && total_clicks >= repeat_count {
-            let mut eng = engine.lock();
-            eng.running = false;
-            let _ = app.emit("engine-status", "idle");
-            continue;
-        }
-
-        // Click
-        {
-            let mut eng = engine.lock();
-            eng.do_click();
-        }
-
-        // Humanizer jitter
-        let jitter = {
-            let mut eng = engine.lock();
-            if eng.config.humanizer_enabled {
-                let nn_input = [
-                    eng.measure_cps() / target_cps.max(1.0),
-                    entropy::shannon_entropy(&eng.intervals),
-                    0.0,
-                    eng.bayesian.state().confidence,
-                ];
-                let j = eng.neural.forward(&nn_input);
-                (j - 0.5) * interval_ms * 0.2 // +/- 10% jitter
-            } else {
-                0.0
+        // Handle start delay
+        if !session_started {
+            session_started = true;
+            if config_snapshot.start_delay_ms > 0 {
+                sleep(Duration::from_millis(config_snapshot.start_delay_ms)).await;
+                // Re-check if still running after delay
+                if !engine.lock().running { continue; }
             }
-        };
+        }
 
-        // Emit telemetry every 5 clicks
+        // Check stop_after_ms
+        if config_snapshot.stop_after_ms > 0 {
+            let elapsed = {
+                let eng = engine.lock();
+                Instant::now().duration_since(eng.session_start).as_millis() as u64
+            };
+            if elapsed >= config_snapshot.stop_after_ms {
+                let mut eng = engine.lock();
+                eng.running = false;
+                let _ = app.emit("engine-status", "idle");
+                continue;
+            }
+        }
+
+        // Check repeat count
+        {
+            let eng = engine.lock();
+            if config_snapshot.repeat_mode == RepeatMode::Count && eng.tick_count >= config_snapshot.repeat_count {
+                drop(eng);
+                let mut eng = engine.lock();
+                eng.running = false;
+                let _ = app.emit("engine-status", "idle");
+                continue;
+            }
+        }
+
+        // Sequence mode: if sequence is non-empty and mode is "click", run sequence
+        if !config_snapshot.sequence.is_empty() && config_snapshot.mode == "click" {
+            for step in &config_snapshot.sequence {
+                if !engine.lock().running { break; }
+                execute_sequence_step(step, &engine);
+                if step.delay_ms > 0 {
+                    sleep(Duration::from_millis(step.delay_ms)).await;
+                }
+            }
+        } else {
+            // Normal mode dispatch
+            match config_snapshot.mode.as_str() {
+                "keyboard" => {
+                    let mut eng = engine.lock();
+                    eng.do_keyboard();
+                }
+                "hold" => {
+                    let mut eng = engine.lock();
+                    eng.do_hold();
+                }
+                "drag" => {
+                    let mut eng = engine.lock();
+                    eng.do_drag();
+                }
+                _ => {
+                    // "click" mode (default)
+                    let mut eng = engine.lock();
+                    eng.do_click();
+                }
+            }
+        }
+
+        // Emit telemetry every 5 ticks
         telemetry_counter += 1;
         if telemetry_counter >= 5 {
             telemetry_counter = 0;
@@ -423,6 +598,12 @@ pub async fn run_click_loop(engine: SharedEngine, app: AppHandle) {
             let _ = app.emit("telemetry", &telemetry);
         }
 
+        // Compute sleep with jitter
+        let jitter = compute_jitter(
+            &config_snapshot.jitter_distribution,
+            interval_ms,
+            config_snapshot.humanizer_enabled,
+        );
         let sleep_ms = (interval_ms + jitter).max(1.0) as u64;
         sleep(Duration::from_millis(sleep_ms)).await;
     }
@@ -430,14 +611,20 @@ pub async fn run_click_loop(engine: SharedEngine, app: AppHandle) {
 
 pub fn start_engine(engine: &SharedEngine, config: ClickConfig) {
     let mut eng = engine.lock();
-    eng.config = config.clone();
-    eng.bayesian.set_target(config.target_cps);
+    eng.config = config;
     eng.running = true;
     eng.tick_count = 0;
     eng.session_start = Instant::now();
-    eng.osha.start_session(0.0);
-    eng.fatigue.set_session_start(0.0);
-    eng.pid.reset();
+    eng.last_click_time = None;
+    eng.intervals.clear();
+    eng.clicks_in_window.clear();
+    eng.cps_history.clear();
+    eng.click_positions.clear();
+    eng.min_cps = f64::MAX;
+    eng.max_cps = 0.0;
+    eng.cps_sum = 0.0;
+    eng.cps_samples = 0;
+    eng.start_delay_done = false;
 }
 
 pub fn stop_engine(engine: &SharedEngine) {
@@ -447,6 +634,5 @@ pub fn stop_engine(engine: &SharedEngine) {
 
 pub fn update_config(engine: &SharedEngine, config: ClickConfig) {
     let mut eng = engine.lock();
-    eng.config = config.clone();
-    eng.bayesian.set_target(config.target_cps);
+    eng.config = config;
 }

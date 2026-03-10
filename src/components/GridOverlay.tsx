@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 
 const COLS = ['A', 'B', 'C', 'D', 'E', 'F'];
-const ROWS = ['1', '2', '3', '4', '5'];
+const ROWS = ['1', '2', '3', '4'];
 
 export function GridOverlay() {
   return (

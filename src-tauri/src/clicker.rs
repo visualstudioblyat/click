@@ -75,6 +75,29 @@ pub fn send_click_at(button: MouseButton, position: Option<(i32, i32)>) {
     }
 }
 
+/// Move cursor to screen position
+pub fn move_to(x: i32, y: i32) {
+    let screen_w = unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CXSCREEN) };
+    let screen_h = unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CYSCREEN) };
+    let abs_x = ((x as f64 / screen_w as f64) * 65535.0) as i32;
+    let abs_y = ((y as f64 / screen_h as f64) * 65535.0) as i32;
+
+    let move_input = [INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: abs_x,
+                dy: abs_y,
+                dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                ..Default::default()
+            },
+        },
+    }];
+    unsafe {
+        SendInput(&move_input, std::mem::size_of::<INPUT>() as i32);
+    }
+}
+
 /// Send a double-click
 pub fn send_double_click_at(button: MouseButton, position: Option<(i32, i32)>) {
     send_click_at(button, position);

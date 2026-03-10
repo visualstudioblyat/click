@@ -8,9 +8,7 @@ import { ProgressRing } from './ProgressRing';
 import { useClickStore } from '../store/clickStore';
 import { useShallow } from 'zustand/react/shallow';
 import { formatDuration } from '../lib/format';
-import type { SoundPreset } from '../types';
-
-const SOUND_PRESETS: SoundPreset[] = ['mechanical', 'typewriter', 'bubble', 'laser', 'asmr'];
+const SOUND_PRESETS = ['mechanical', 'typewriter', 'bubble', 'laser', 'asmr'] as const;
 const IS_TAURI = '__TAURI_INTERNALS__' in window;
 
 export function ControlPanel() {

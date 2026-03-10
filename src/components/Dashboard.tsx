@@ -1,17 +1,14 @@
 import { ControlPanel } from './ControlPanel';
 import { CpsChart } from './CpsChart';
-import { EntropyGauge } from './EntropyGauge';
-import { PidPanel } from './PidPanel';
-import { FourierSpectrum } from './FourierSpectrum';
-import { BayesianPanel } from './BayesianPanel';
-import { SeismographPanel } from './SeismographPanel';
-import { MonteCarloPanel } from './MonteCarloPanel';
-import { ProvenancePanel } from './ProvenancePanel';
-import { OshaPanel } from './OshaPanel';
-import { BocpdPanel } from './BocpdPanel';
-import { WeatherPanel } from './WeatherPanel';
-import { BrierPanel } from './BrierPanel';
-import { NeuralPanel } from './NeuralPanel';
+import { StatisticsPanel } from './StatisticsPanel';
+import { ProfilesPanel } from './ProfilesPanel';
+import { SchedulePanel } from './SchedulePanel';
+import { SequencePanel } from './SequencePanel';
+import { KeyboardPanel } from './KeyboardPanel';
+import { HoldDragPanel } from './HoldDragPanel';
+import { HeatmapPanel } from './HeatmapPanel';
+import { AntiDetectionPanel } from './AntiDetectionPanel';
+import { CounterOverlay } from './CounterOverlay';
 
 export function Dashboard() {
   return (
@@ -19,13 +16,12 @@ export function Dashboard() {
       style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(6, 1fr)',
-        gridTemplateRows: '420px 260px 260px 260px 260px',
+        gridTemplateRows: '420px 260px 260px 260px',
         gridTemplateAreas: [
           'control control chart chart chart chart',
-          'bayes bayes pid pid entropy entropy',
-          'neural neural fft fft seismo seismo',
-          'monte monte bocpd bocpd weather weather',
-          'osha osha prov prov brier brier',
+          'stats stats profiles profiles schedule schedule',
+          'sequence sequence keyboard keyboard holddrag holddrag',
+          'heatmap heatmap antidet antidet counter counter',
         ].map(r => `"${r}"`).join(' '),
         gap: 'var(--gap)',
         padding: 'var(--gap)',
@@ -36,18 +32,15 @@ export function Dashboard() {
     >
       <ControlPanel />
       <CpsChart />
-      <BayesianPanel />
-      <PidPanel />
-      <EntropyGauge />
-      <NeuralPanel />
-      <FourierSpectrum />
-      <SeismographPanel />
-      <MonteCarloPanel />
-      <BocpdPanel />
-      <WeatherPanel />
-      <OshaPanel />
-      <ProvenancePanel />
-      <BrierPanel />
+      <StatisticsPanel />
+      <ProfilesPanel />
+      <SchedulePanel />
+      <SequencePanel />
+      <KeyboardPanel />
+      <HoldDragPanel />
+      <HeatmapPanel />
+      <AntiDetectionPanel />
+      <CounterOverlay />
     </div>
   );
 }

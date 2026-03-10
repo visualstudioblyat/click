@@ -1,18 +1,8 @@
-mod bayesian;
-mod brier;
-mod bocpd;
 mod clicker;
+mod drag;
 mod engine;
-mod entropy;
-mod fatigue;
-mod fourier;
 mod hotkey;
-mod montecarlo;
-mod neural;
-mod osha;
-mod pid;
-mod provenance;
-mod weather;
+mod keyboard;
 
 use engine::{SharedEngine, ClickConfig};
 use tauri::{AppHandle, State, Emitter};
@@ -65,7 +55,6 @@ fn key_to_code(key: &str) -> Option<Code> {
 fn register_hotkey(app: &AppHandle, key: &str) -> Result<(), String> {
     let bind = hotkey::HotkeyBind::from_str(key);
 
-    // Always clean up both systems
     let _ = app.global_shortcut().unregister_all();
     hotkey::stop_mouse_hook();
 
@@ -137,7 +126,6 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(engine::run_click_loop(engine_clone, handle.clone()));
 
-            // Register default F6 hotkey
             register_hotkey(&handle, "F6").expect("Failed to register default hotkey");
 
             Ok(())
