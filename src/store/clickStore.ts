@@ -34,7 +34,9 @@ interface ClickStore {
   // Profile actions
   addProfile: (name: string) => void;
   removeProfile: (name: string) => void;
+  renameProfile: (oldName: string, newName: string) => void;
   loadProfile: (name: string) => void;
+  importProfiles: (profiles: Profile[]) => void;
 }
 
 const defaultTelemetry: TelemetrySnapshot = {
@@ -143,8 +145,30 @@ export const useClickStore = create<ClickStore>((set, get) => ({
     set({ profiles });
   },
 
+  renameProfile: (oldName, newName) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    const profiles = get().profiles.map((p) =>
+      p.name === oldName ? { ...p, name: trimmed } : p
+    );
+    saveProfiles(profiles);
+    set({ profiles });
+  },
+
   loadProfile: (name) => {
     const profile = get().profiles.find((p) => p.name === name);
     if (profile) set({ config: { ...profile.config } });
+  },
+
+  importProfiles: (imported) => {
+    const existing = get().profiles;
+    const merged = [...existing];
+    for (const p of imported) {
+      const idx = merged.findIndex((e) => e.name === p.name);
+      if (idx >= 0) merged[idx] = p;
+      else merged.push(p);
+    }
+    saveProfiles(merged);
+    set({ profiles: merged });
   },
 }));

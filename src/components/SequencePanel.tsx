@@ -1,4 +1,4 @@
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, Reorder, AnimatePresence } from 'framer-motion';
 import { Card } from './Card';
 import { useClickStore } from '../store/clickStore';
 import { useShallow } from 'zustand/react/shallow';
@@ -23,6 +23,11 @@ const ACTION_COLORS: Record<string, string> = {
   wait: 'var(--text-tertiary)',
 };
 
+// Each step gets a stable id for reorder
+interface StepWithId extends SequenceStep {
+  _id: number;
+}
+
 export function SequencePanel() {
   const { sequence, setConfig } = useClickStore(
     useShallow((s) => ({
@@ -31,18 +36,29 @@ export function SequencePanel() {
     })),
   );
 
+  // Wrap steps with stable ids for reorder
+  const steps: StepWithId[] = sequence.map((s, i) => ({ ...s, _id: i }));
+
+  const setSequence = (newSteps: SequenceStep[]) => {
+    setConfig({ sequence: newSteps });
+  };
+
   const addStep = () => {
     const step: SequenceStep = { action: 'click_left', delay_ms: 100 };
-    setConfig({ sequence: [...sequence, step] });
+    setSequence([...sequence, step]);
   };
 
   const removeStep = (idx: number) => {
-    setConfig({ sequence: sequence.filter((_, i) => i !== idx) });
+    setSequence(sequence.filter((_, i) => i !== idx));
   };
 
   const updateStep = (idx: number, partial: Partial<SequenceStep>) => {
     const next = sequence.map((s, i) => (i === idx ? { ...s, ...partial } : s));
-    setConfig({ sequence: next });
+    setSequence(next);
+  };
+
+  const handleReorder = (newOrder: StepWithId[]) => {
+    setSequence(newOrder.map(({ _id, ...rest }) => rest));
   };
 
   return (
@@ -74,98 +90,91 @@ export function SequencePanel() {
           </div>
         )}
 
-        {/* Steps list */}
-        <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <AnimatePresence mode="popLayout">
-            {sequence.length === 0 && (
-              <motion.div
-                key="empty"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="mono text-tertiary"
-                style={{ fontSize: 10, textAlign: 'center', padding: 16 }}
-              >
-                NO SEQUENCE
-              </motion.div>
-            )}
-            {sequence.map((step, i) => (
-              <motion.div
-                key={i}
-                layout
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 8 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '4px 0',
-                  borderBottom: '1px dashed var(--border-dashed)',
-                }}
-              >
-                {/* Step number */}
-                <span className="mono text-tertiary" style={{ fontSize: 8, width: 14, flexShrink: 0 }}>
-                  {String(i + 1).padStart(2, '0')}
-                </span>
-
-                {/* Action select */}
-                <select
-                  value={step.action}
-                  onChange={(e) => updateStep(i, { action: e.target.value as SequenceStep['action'] })}
-                  className="mono"
+        {/* Steps list — drag to reorder */}
+        <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+          {sequence.length === 0 && (
+            <div className="mono text-tertiary" style={{ fontSize: 10, textAlign: 'center', padding: 16 }}>
+              NO SEQUENCE — CTRL+1 CLICK MODE
+            </div>
+          )}
+          <Reorder.Group axis="y" values={steps} onReorder={handleReorder} style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <AnimatePresence mode="popLayout">
+              {steps.map((step, i) => (
+                <Reorder.Item
+                  key={step._id}
+                  value={step}
                   style={{
-                    ...inputStyle,
-                    flex: 1,
-                    minWidth: 0,
-                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '4px 0',
+                    borderBottom: '1px dashed var(--border-dashed)',
+                    cursor: 'grab',
                   }}
+                  whileDrag={{ scale: 1.02, boxShadow: '0 2px 8px rgba(0,0,0,0.3)' }}
                 >
-                  {ACTIONS.map((a) => (
-                    <option key={a} value={a}>{a.toUpperCase()}</option>
-                  ))}
-                </select>
+                  {/* Drag handle */}
+                  <span className="mono text-tertiary" style={{ fontSize: 10, cursor: 'grab', userSelect: 'none' }}>
+                    ⠿
+                  </span>
 
-                {/* Delay input */}
-                <input
-                  type="number"
-                  min={0}
-                  step={10}
-                  value={step.delay_ms}
-                  onChange={(e) => updateStep(i, { delay_ms: Math.max(0, Number(e.target.value)) })}
-                  className="mono"
-                  style={{ ...inputStyle, width: 56 }}
-                  title="delay (ms)"
-                />
+                  {/* Step number */}
+                  <span className="mono text-tertiary" style={{ fontSize: 8, width: 14, flexShrink: 0 }}>
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
 
-                {/* Key input (only for key action) */}
-                {step.action === 'key' && (
-                  <input
-                    type="text"
-                    value={step.key || ''}
-                    onChange={(e) => updateStep(i, { key: e.target.value })}
-                    placeholder="key"
+                  {/* Action select */}
+                  <select
+                    value={step.action}
+                    onChange={(e) => updateStep(i, { action: e.target.value as SequenceStep['action'] })}
                     className="mono"
-                    style={{ ...inputStyle, width: 40 }}
-                  />
-                )}
+                    style={{ ...inputStyle, flex: 1, minWidth: 0, cursor: 'pointer' }}
+                  >
+                    {ACTIONS.map((a) => (
+                      <option key={a} value={a}>{a.toUpperCase()}</option>
+                    ))}
+                  </select>
 
-                {/* Delete button */}
-                <motion.button
-                  className="btn btn-red"
-                  whileTap={{ scale: 0.9 }}
-                  onClick={() => removeStep(i)}
-                  style={{ fontSize: 9, padding: '3px 6px', flexShrink: 0 }}
-                >
-                  X
-                </motion.button>
-              </motion.div>
-            ))}
-          </AnimatePresence>
+                  {/* Delay input */}
+                  <input
+                    type="number"
+                    min={0}
+                    step={10}
+                    value={step.delay_ms}
+                    onChange={(e) => updateStep(i, { delay_ms: Math.max(0, Number(e.target.value)) })}
+                    className="mono"
+                    style={{ ...inputStyle, width: 56 }}
+                    title="delay (ms)"
+                  />
+
+                  {/* Key input */}
+                  {step.action === 'key' && (
+                    <input
+                      type="text"
+                      value={step.key || ''}
+                      onChange={(e) => updateStep(i, { key: e.target.value })}
+                      placeholder="key"
+                      className="mono"
+                      style={{ ...inputStyle, width: 40 }}
+                    />
+                  )}
+
+                  {/* Delete */}
+                  <motion.button
+                    className="btn btn-red"
+                    whileTap={{ scale: 0.9 }}
+                    onClick={() => removeStep(i)}
+                    style={{ fontSize: 9, padding: '3px 6px', flexShrink: 0 }}
+                  >
+                    X
+                  </motion.button>
+                </Reorder.Item>
+              ))}
+            </AnimatePresence>
+          </Reorder.Group>
         </div>
 
-        {/* Add step button */}
+        {/* Add step */}
         <motion.button
           className="btn btn-green"
           whileTap={{ scale: 0.95 }}

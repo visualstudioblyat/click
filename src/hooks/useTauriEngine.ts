@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useClickStore } from '../store/clickStore';
 import type { TelemetrySnapshot, CandleData } from '../types';
 
-// Check if we're running inside Tauri
 const IS_TAURI = '__TAURI_INTERNALS__' in window;
 
 export function useTauriEngine() {
@@ -22,7 +22,11 @@ export function useTauriEngine() {
       store.updateTelemetry(t);
       store.pushCps(t.cps);
 
-      // Add click from latest position if available
+      // Update title bar with click count
+      getCurrentWindow().setTitle(
+        `click — ${t.total_clicks.toLocaleString()} clicks | ${t.cps.toFixed(1)} CPS`
+      ).catch(() => {});
+
       if (t.click_positions && t.click_positions.length > 0) {
         const [x, y] = t.click_positions[t.click_positions.length - 1];
         store.addClick({
@@ -70,6 +74,14 @@ export function useTauriEngine() {
     return () => { unlistenStatus.then((fn) => fn()); };
   }, []);
 
+  // Reset title when idle
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    if (status === 'idle') {
+      getCurrentWindow().setTitle('click').catch(() => {});
+    }
+  }, [status]);
+
   // Start/stop engine based on status changes
   useEffect(() => {
     if (!IS_TAURI) return;
@@ -81,7 +93,7 @@ export function useTauriEngine() {
     }
   }, [status]);
 
-  // Push config updates to Rust — all fields that affect engine behavior
+  // Push config updates to Rust
   useEffect(() => {
     if (!IS_TAURI || status !== 'running') return;
     invoke('update_config', { config }).catch(console.error);
@@ -106,6 +118,22 @@ export function useTauriEngine() {
     config.drag_to_y,
     config.sequence,
   ]);
+
+  // Keyboard shortcuts: Ctrl+1-4 for mode switch
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return;
+      const store = useClickStore.getState();
+      switch (e.key) {
+        case '1': e.preventDefault(); store.setConfig({ mode: 'click' }); break;
+        case '2': e.preventDefault(); store.setConfig({ mode: 'keyboard' }); break;
+        case '3': e.preventDefault(); store.setConfig({ mode: 'hold' }); break;
+        case '4': e.preventDefault(); store.setConfig({ mode: 'drag' }); break;
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   return IS_TAURI;
 }

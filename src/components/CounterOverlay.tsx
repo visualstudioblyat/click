@@ -5,6 +5,8 @@ import { useClickStore } from '../store/clickStore';
 import { useShallow } from 'zustand/react/shallow';
 import { formatDuration } from '../lib/format';
 
+const IS_TAURI = '__TAURI_INTERNALS__' in window;
+
 export function CounterOverlay() {
   const { status, telemetry } = useClickStore(
     useShallow((s) => ({
@@ -15,6 +17,15 @@ export function CounterOverlay() {
 
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
   const isRunning = status === 'running';
+
+  const togglePin = async () => {
+    const next = !alwaysOnTop;
+    setAlwaysOnTop(next);
+    if (IS_TAURI) {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      getCurrentWindow().setAlwaysOnTop(next).catch(() => {});
+    }
+  };
 
   return (
     <Card label="[COUNTER]" delay={0.3} span="counter">
@@ -29,18 +40,8 @@ export function CounterOverlay() {
         }}
       >
         {/* Total clicks - big number */}
-        <motion.div
+        <div
           className="mono"
-          animate={{
-            textShadow: isRunning
-              ? ['0 0 8px rgba(74,222,128,0.6)', '0 0 20px rgba(74,222,128,0.3)', '0 0 8px rgba(74,222,128,0.6)']
-              : '0 0 0px transparent',
-          }}
-          transition={{
-            duration: 1.5,
-            repeat: Infinity,
-            ease: 'easeInOut',
-          }}
           style={{
             fontSize: 32,
             fontWeight: 700,
@@ -50,7 +51,7 @@ export function CounterOverlay() {
           }}
         >
           {telemetry.total_clicks.toLocaleString()}
-        </motion.div>
+        </div>
 
         {/* CPS */}
         <div
@@ -77,7 +78,7 @@ export function CounterOverlay() {
         <motion.button
           className={`btn ${alwaysOnTop ? 'btn-green' : ''}`}
           whileTap={{ scale: 0.95 }}
-          onClick={() => setAlwaysOnTop(!alwaysOnTop)}
+          onClick={togglePin}
           style={{
             fontSize: 9,
             padding: '4px 12px',

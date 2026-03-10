@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Card } from './Card';
 import { useClickStore } from '../store/clickStore';
@@ -14,22 +14,63 @@ const inputStyle = {
 } as const;
 
 export function ProfilesPanel() {
-  const { profiles, addProfile, removeProfile, loadProfile } = useClickStore(
+  const { profiles, addProfile, removeProfile, renameProfile, loadProfile, importProfiles } = useClickStore(
     useShallow((s) => ({
       profiles: s.profiles,
       addProfile: s.addProfile,
       removeProfile: s.removeProfile,
+      renameProfile: s.renameProfile,
       loadProfile: s.loadProfile,
+      importProfiles: s.importProfiles,
     })),
   );
 
   const [name, setName] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const save = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
     addProfile(trimmed);
     setName('');
+  };
+
+  const startRename = (n: string) => {
+    setEditing(n);
+    setEditName(n);
+  };
+
+  const confirmRename = () => {
+    if (editing && editName.trim()) {
+      renameProfile(editing, editName.trim());
+    }
+    setEditing(null);
+  };
+
+  const exportProfiles = () => {
+    const blob = new Blob([JSON.stringify(profiles, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'click-profiles.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result as string);
+        if (Array.isArray(data)) importProfiles(data);
+      } catch { /* invalid json */ }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
   };
 
   return (
@@ -56,13 +97,34 @@ export function ProfilesPanel() {
           </motion.button>
         </div>
 
+        {/* Import/Export */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          <motion.button
+            className="btn"
+            whileTap={{ scale: 0.95 }}
+            onClick={exportProfiles}
+            style={{ flex: 1, fontSize: 9, padding: '4px 0', justifyContent: 'center' }}
+          >
+            EXPORT
+          </motion.button>
+          <motion.button
+            className="btn"
+            whileTap={{ scale: 0.95 }}
+            onClick={() => fileRef.current?.click()}
+            style={{ flex: 1, fontSize: 9, padding: '4px 0', justifyContent: 'center' }}
+          >
+            IMPORT
+          </motion.button>
+          <input ref={fileRef} type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
+        </div>
+
         {/* Profile list */}
         <div
           style={{
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
-            maxHeight: 180,
+            maxHeight: 140,
             overflowY: 'auto',
           }}
         >
@@ -82,9 +144,27 @@ export function ProfilesPanel() {
                 borderBottom: '1px dashed var(--border-dashed)',
               }}
             >
-              <span className="mono" style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {p.name}
-              </span>
+              {editing === p.name ? (
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') confirmRename(); if (e.key === 'Escape') setEditing(null); }}
+                  onBlur={confirmRename}
+                  autoFocus
+                  className="mono"
+                  style={{ ...inputStyle, flex: 1, marginRight: 6 }}
+                />
+              ) : (
+                <span
+                  className="mono"
+                  style={{ fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                  onDoubleClick={() => startRename(p.name)}
+                  title="Double-click to rename"
+                >
+                  {p.name}
+                </span>
+              )}
               <div style={{ display: 'flex', gap: 4 }}>
                 <motion.button
                   className="btn btn-green"

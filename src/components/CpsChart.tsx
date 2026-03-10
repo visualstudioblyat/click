@@ -3,13 +3,19 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Card } from './Card';
 import { Mascot } from './Mascot';
 import { useClickStore } from '../store/clickStore';
+import { useShallow } from 'zustand/react/shallow';
 
 export function CpsChart() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const cpsHistory = useClickStore((s) => s.cpsHistory);
-  const status = useClickStore((s) => s.status);
-  const targetCps = useClickStore((s) => s.config.target_cps);
+  const { cpsHistory, status, targetCps, hotkey } = useClickStore(
+    useShallow((s) => ({
+      cpsHistory: s.cpsHistory,
+      status: s.status,
+      targetCps: s.config.target_cps,
+      hotkey: s.config.hotkey,
+    })),
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -178,7 +184,7 @@ export function CpsChart() {
             >
               <Mascot size={100} animate />
               <span className="mono text-tertiary" style={{ fontSize: 10 }}>
-                PRESS F6 TO START
+                PRESS {hotkey} TO START
               </span>
             </motion.div>
           )}

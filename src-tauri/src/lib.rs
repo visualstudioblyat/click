@@ -7,7 +7,9 @@ mod keyboard;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use engine::{SharedEngine, ClickConfig};
-use tauri::{AppHandle, State, Emitter};
+use tauri::{AppHandle, Manager, State, Emitter};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
 
 struct EngineState(SharedEngine);
@@ -81,12 +83,18 @@ fn register_hotkey(app: &AppHandle, key: &str) -> Result<(), String> {
 
 #[tauri::command]
 fn start_engine(state: State<EngineState>, config: ClickConfig) {
+    // Beep on start
+    #[cfg(windows)]
+    { let _ = std::thread::spawn(|| unsafe { let _ = windows::Win32::System::Diagnostics::Debug::Beep(750, 100); }); }
     engine::start_engine(&state.0, config);
 }
 
 #[tauri::command]
 fn stop_engine(state: State<EngineState>) {
     engine::stop_engine(&state.0);
+    // Beep on stop
+    #[cfg(windows)]
+    { let _ = std::thread::spawn(|| unsafe { let _ = windows::Win32::System::Diagnostics::Debug::Beep(500, 100); }); }
 }
 
 #[tauri::command]
@@ -108,6 +116,19 @@ fn get_cursor_pos() -> (i32, i32) {
     (pt.x, pt.y)
 }
 
+#[tauri::command]
+fn clear_heatmap(state: State<EngineState>) {
+    let mut eng = state.0.lock();
+    eng.click_positions.clear();
+}
+
+#[tauri::command]
+fn pick_location() -> (i32, i32) {
+    // Wait 2 seconds then capture — done on Rust side for reliability
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    get_cursor_pos()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let engine = engine::create_engine(ClickConfig::default());
@@ -123,6 +144,8 @@ pub fn run() {
             update_config,
             rebind_hotkey,
             get_cursor_pos,
+            clear_heatmap,
+            pick_location,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -131,7 +154,46 @@ pub fn run() {
 
             register_hotkey(&handle, "F6").expect("Failed to register default hotkey");
 
+            // System tray
+            let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().cloned().unwrap())
+                .menu(&menu)
+                .on_menu_event(move |app, event| {
+                    match event.id().as_ref() {
+                        "show" => {
+                            if let Some(w) = app.get_webview_window("main") {
+                                let _ = w.show();
+                                let _ = w.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click { .. } = event {
+                        if let Some(w) = tray.app_handle().get_webview_window("main") {
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Minimize to tray on close
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -16,7 +16,7 @@ export function Dashboard() {
       style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(6, 1fr)',
-        gridTemplateRows: '420px 260px 260px 260px',
+        gridTemplateRows: 'minmax(320px, 1.5fr) repeat(3, minmax(200px, 1fr))',
         gridTemplateAreas: [
           'control control chart chart chart chart',
           'stats stats profiles profiles schedule schedule',

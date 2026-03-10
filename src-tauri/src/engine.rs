@@ -152,10 +152,13 @@ pub struct Engine {
     cps_samples: u64,
 
     // Heatmap
-    click_positions: Vec<(i32, i32)>,
+    pub click_positions: Vec<(i32, i32)>,
 
     // Schedule tracking
     start_delay_done: bool,
+
+    // Hold mode state machine
+    hold_pressed_at: Option<Instant>,
 }
 
 impl Engine {
@@ -173,6 +176,7 @@ impl Engine {
             cps_samples: 0,
             click_positions: Vec::new(),
             start_delay_done: false,
+            hold_pressed_at: None,
             config,
             running: false,
         }
@@ -278,7 +282,7 @@ impl Engine {
         self.tick_count += 1;
     }
 
-    fn do_hold(&mut self) {
+    fn hold_press(&mut self) {
         let now = Instant::now();
         if let Some(last) = self.last_click_time {
             let interval = now.duration_since(last).as_secs_f64() * 1000.0;
@@ -289,27 +293,28 @@ impl Engine {
         self.clicks_in_window.push(now);
 
         let position = self.apply_position_jitter(self.get_position());
-
-        // Move to position if fixed
         if let Some((x, y)) = position {
             clicker::move_to(x, y);
         }
 
-        let btn = self.config.button;
-        let dur = self.config.hold_duration_ms;
-        drag::hold_button(btn);
-        if dur > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(dur));
-            drag::release_button(btn);
-        } else {
-            drag::release_button(btn);
-        }
-
+        drag::hold_button(self.config.button);
+        self.hold_pressed_at = Some(now);
         self.record_cursor_pos();
+    }
 
-        let cps = self.measure_cps();
-        self.update_stats(cps);
-        self.tick_count += 1;
+    fn hold_check_release(&mut self) -> bool {
+        if let Some(pressed_at) = self.hold_pressed_at {
+            let elapsed = Instant::now().duration_since(pressed_at).as_millis() as u64;
+            if elapsed >= self.config.hold_duration_ms.max(1) {
+                drag::release_button(self.config.button);
+                self.hold_pressed_at = None;
+                let cps = self.measure_cps();
+                self.update_stats(cps);
+                self.tick_count += 1;
+                return true; // released, ready for next
+            }
+        }
+        false
     }
 
     fn do_drag(&mut self) {
@@ -551,7 +556,37 @@ pub fn spawn_click_loop(engine: SharedEngine, app: AppHandle, stop_flag: Arc<Ato
                     // Normal mode dispatch
                     match config_snapshot.mode.as_str() {
                         "keyboard" => { engine.lock().do_keyboard(); }
-                        "hold" => { engine.lock().do_hold(); }
+                        "hold" => {
+                    let mut eng = engine.lock();
+                    if eng.hold_pressed_at.is_some() {
+                        // Check if hold duration elapsed
+                        if !eng.hold_check_release() {
+                            drop(eng);
+                            // Still holding — short sleep, keep telemetry flowing
+                            spin_sleep::sleep(Duration::from_millis(5));
+                            // skip the normal sleep at bottom
+                            telemetry_counter += 1;
+                            if telemetry_counter >= 5 {
+                                telemetry_counter = 0;
+                                let telemetry = { engine.lock().compute_telemetry() };
+                                let cps = telemetry.cps;
+                                if candle_ticks == 0 { candle_open = cps; candle_high = cps; candle_low = cps; }
+                                candle_high = candle_high.max(cps);
+                                candle_low = candle_low.min(cps);
+                                candle_ticks += 1;
+                                if candle_ticks >= candle_period {
+                                    let candle = CandleData { time: chrono::Utc::now().timestamp(), open: candle_open, high: candle_high, low: candle_low, close: cps };
+                                    let _ = app.emit("candle", &candle);
+                                    candle_ticks = 0; candle_high = 0.0; candle_low = f64::MAX;
+                                }
+                                let _ = app.emit("telemetry", &telemetry);
+                            }
+                            continue;
+                        }
+                    } else {
+                        eng.hold_press();
+                    }
+                }
                         "drag" => { engine.lock().do_drag(); }
                         _ => { engine.lock().do_click(); }
                     }

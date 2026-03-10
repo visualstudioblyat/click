@@ -23,6 +23,7 @@ export function ControlPanel() {
   const isRunning = status === 'running';
   const [bindingHotkey, setBindingHotkey] = useState(false);
   const [pickingLocation, setPickingLocation] = useState(false);
+  const [pickCountdown, setPickCountdown] = useState(0);
 
   // Hotkey binding
   const bindKey = useCallback((key: string) => {
@@ -55,12 +56,15 @@ export function ControlPanel() {
     };
   }, [bindingHotkey, handleKeyBind, handleMouseBind]);
 
-  // Pick cursor position for fixed location
+  // Pick cursor position with countdown
   const pickLocation = async () => {
     if (!IS_TAURI) return;
     setPickingLocation(true);
-    // Give user 2 seconds to position cursor
-    await new Promise((r) => setTimeout(r, 2000));
+    setPickCountdown(3);
+    for (let i = 2; i >= 0; i--) {
+      await new Promise((r) => setTimeout(r, 1000));
+      setPickCountdown(i);
+    }
     try {
       const [x, y] = await invoke<[number, number]>('get_cursor_pos');
       setConfig({ fixed_x: x, fixed_y: y, location_mode: 'fixed' });
@@ -271,7 +275,7 @@ export function ControlPanel() {
                   border: pickingLocation ? '1px dashed var(--green)' : undefined,
                 }}
               >
-                {pickingLocation ? 'MOVE CURSOR...' : 'PICK'}
+                {pickingLocation ? `${pickCountdown}s...` : 'PICK'}
               </motion.button>
             </div>
           )}
@@ -326,6 +330,17 @@ export function ControlPanel() {
                 <span className="text-tertiary"> / {config.repeat_count.toLocaleString()}</span>
               )}
             </div>
+            {config.repeat_mode === 'count' && isRunning && (
+              <div style={{ width: '100%', height: 3, background: 'var(--border)', borderRadius: 2, marginTop: 4 }}>
+                <div style={{
+                  width: `${Math.min(100, (telemetry.total_clicks / config.repeat_count) * 100)}%`,
+                  height: '100%',
+                  background: 'var(--green)',
+                  borderRadius: 2,
+                  transition: 'width 200ms ease-out',
+                }} />
+              </div>
+            )}
           </div>
           <div style={{ textAlign: 'right' }}>
             <div className="mono text-tertiary" style={{ fontSize: 9 }}>SESSION</div>
