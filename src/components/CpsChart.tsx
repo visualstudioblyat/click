@@ -1,120 +1,161 @@
 import { useEffect, useRef } from 'react';
-import { createChart, type IChartApi, ColorType, CandlestickSeries, LineSeries } from 'lightweight-charts';
 import { Card } from './Card';
 import { useClickStore } from '../store/clickStore';
 
 export function CpsChart() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef = useRef<any>(null);
-  const lineSeriesRef = useRef<any>(null);
-  const candles = useClickStore((s) => s.candles);
   const cpsHistory = useClickStore((s) => s.cpsHistory);
+  const status = useClickStore((s) => s.status);
+  const targetCps = useClickStore((s) => s.config.target_cps);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
 
-    const chart = createChart(containerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: 'rgba(255,255,255,0.3)',
-        fontFamily: "'JetBrains Mono', monospace",
-        fontSize: 10,
-      },
-      grid: {
-        vertLines: { color: 'rgba(255,255,255,0.03)' },
-        horzLines: { color: 'rgba(255,255,255,0.03)' },
-      },
-      crosshair: {
-        vertLine: { color: 'rgba(74,222,128,0.3)', width: 1, style: 2 },
-        horzLine: { color: 'rgba(74,222,128,0.3)', width: 1, style: 2 },
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(255,255,255,0.06)',
-      },
-      timeScale: {
-        borderColor: 'rgba(255,255,255,0.06)',
-        timeVisible: true,
-      },
-      handleScale: false,
-      handleScroll: true,
+    const ro = new ResizeObserver(() => {
+      canvas.width = container.clientWidth * devicePixelRatio;
+      canvas.height = container.clientHeight * devicePixelRatio;
+      canvas.style.width = container.clientWidth + 'px';
+      canvas.style.height = container.clientHeight + 'px';
     });
-
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#4ade80',
-      downColor: '#f97316',
-      borderUpColor: '#4ade80',
-      borderDownColor: '#f97316',
-      wickUpColor: 'rgba(74,222,128,0.5)',
-      wickDownColor: 'rgba(249,115,22,0.5)',
-    });
-
-    const lineSeries = chart.addSeries(LineSeries, {
-      color: 'rgba(74,222,128,0.4)',
-      lineWidth: 1,
-      lineStyle: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
-
-    chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
-    lineSeriesRef.current = lineSeries;
-
-    const ro = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      chart.applyOptions({ width, height });
-    });
-    ro.observe(containerRef.current);
-
-    return () => {
-      ro.disconnect();
-      chart.remove();
-    };
+    ro.observe(container);
+    return () => ro.disconnect();
   }, []);
 
-  // Update candle data
   useEffect(() => {
-    if (candleSeriesRef.current && candles.length > 0) {
-      candleSeriesRef.current.setData(
-        candles.map((c) => ({
-          time: c.time as any,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-        })),
-      );
-    }
-  }, [candles]);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-  // Update line (moving average) data
-  useEffect(() => {
-    if (lineSeriesRef.current && cpsHistory.length > 0) {
-      const win = 10;
-      const ma = cpsHistory.map((_, i, arr) => {
-        const start = Math.max(0, i - win + 1);
-        const slice = arr.slice(start, i + 1);
-        return slice.reduce((a, b) => a + b, 0) / slice.length;
-      });
+    const w = canvas.width;
+    const h = canvas.height;
+    const dpr = devicePixelRatio;
 
-      lineSeriesRef.current.setData(
-        ma.map((v, i) => ({
-          time: (Math.floor(Date.now() / 1000) - cpsHistory.length + i) as any,
-          value: v,
-        })),
-      );
+    ctx.clearRect(0, 0, w, h);
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = dpr;
+    for (let i = 1; i < 5; i++) {
+      const y = (h / 5) * i;
+      ctx.beginPath();
+      ctx.setLineDash([4 * dpr, 4 * dpr]);
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
     }
-  }, [cpsHistory]);
+    ctx.setLineDash([]);
+
+    if (cpsHistory.length < 2) {
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.font = `${11 * dpr}px "JetBrains Mono", monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('WAITING FOR DATA...', w / 2, h / 2);
+      return;
+    }
+
+    const data = cpsHistory.slice(-300);
+    const max = Math.max(...data, targetCps) * 1.15;
+    const min = Math.max(0, Math.min(...data) * 0.85);
+    const range = max - min || 1;
+
+    const padX = 0;
+    const padY = 16 * dpr;
+    const plotW = w - padX;
+    const plotH = h - padY * 2;
+
+    const toX = (i: number) => padX + (i / (data.length - 1)) * plotW;
+    const toY = (v: number) => padY + plotH - ((v - min) / range) * plotH;
+
+    // Target CPS line
+    const targetY = toY(targetCps);
+    ctx.strokeStyle = 'rgba(249,115,22,0.3)';
+    ctx.lineWidth = dpr;
+    ctx.setLineDash([6 * dpr, 4 * dpr]);
+    ctx.beginPath();
+    ctx.moveTo(0, targetY);
+    ctx.lineTo(w, targetY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Target label
+    ctx.fillStyle = 'rgba(249,115,22,0.5)';
+    ctx.font = `${9 * dpr}px "JetBrains Mono", monospace`;
+    ctx.textAlign = 'right';
+    ctx.fillText(`TARGET ${targetCps}`, w - 4 * dpr, targetY - 4 * dpr);
+
+    // Fill gradient under line
+    const gradient = ctx.createLinearGradient(0, toY(max), 0, toY(min));
+    gradient.addColorStop(0, 'rgba(74,222,128,0.15)');
+    gradient.addColorStop(1, 'rgba(74,222,128,0.0)');
+
+    ctx.beginPath();
+    ctx.moveTo(toX(0), toY(data[0]));
+    for (let i = 1; i < data.length; i++) {
+      ctx.lineTo(toX(i), toY(data[i]));
+    }
+    ctx.lineTo(toX(data.length - 1), h);
+    ctx.lineTo(toX(0), h);
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // CPS line
+    ctx.beginPath();
+    ctx.moveTo(toX(0), toY(data[0]));
+    for (let i = 1; i < data.length; i++) {
+      ctx.lineTo(toX(i), toY(data[i]));
+    }
+    ctx.strokeStyle = '#4ade80';
+    ctx.lineWidth = 1.5 * dpr;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Current value dot
+    const lastX = toX(data.length - 1);
+    const lastY = toY(data[data.length - 1]);
+    if (status === 'running') {
+      ctx.beginPath();
+      ctx.arc(lastX, lastY, 3 * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = '#4ade80';
+      ctx.fill();
+
+      // Glow
+      ctx.beginPath();
+      ctx.arc(lastX, lastY, 6 * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(74,222,128,0.2)';
+      ctx.fill();
+    }
+
+    // Y-axis labels
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = `${9 * dpr}px "JetBrains Mono", monospace`;
+    ctx.textAlign = 'left';
+    const steps = 4;
+    for (let i = 0; i <= steps; i++) {
+      const v = min + (range / steps) * i;
+      const y = toY(v);
+      ctx.fillText(v.toFixed(1), 4 * dpr, y - 2 * dpr);
+    }
+
+    // Current CPS label
+    if (data.length > 0) {
+      const current = data[data.length - 1];
+      ctx.fillStyle = '#4ade80';
+      ctx.font = `bold ${11 * dpr}px "JetBrains Mono", monospace`;
+      ctx.textAlign = 'right';
+      ctx.fillText(current.toFixed(1) + ' CPS', w - 4 * dpr, padY - 2 * dpr);
+    }
+  }, [cpsHistory, targetCps, status]);
 
   return (
-    <Card label="[CPS MARKET]" delay={0.1} span="chart">
-      <div style={{ display: 'flex', gap: 12, marginBottom: 8 }}>
-        <span className="mono text-secondary" style={{ fontSize: 9 }}>CANDLESTICK</span>
-        <span className="mono text-tertiary" style={{ fontSize: 9 }}>SMA(10)</span>
-        <span className="mono text-tertiary" style={{ fontSize: 9 }}>VOL</span>
+    <Card label="[CLICK TIMELINE]" delay={0.1} span="chart">
+      <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+        <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
       </div>
-      <div ref={containerRef} style={{ width: '100%', height: 'calc(100% - 36px)' }} />
     </Card>
   );
 }
