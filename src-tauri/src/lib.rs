@@ -4,6 +4,8 @@ mod engine;
 mod hotkey;
 mod keyboard;
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use engine::{SharedEngine, ClickConfig};
 use tauri::{AppHandle, State, Emitter};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut};
@@ -124,7 +126,8 @@ pub fn run() {
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
-            tauri::async_runtime::spawn(engine::run_click_loop(engine_clone, handle.clone()));
+            let stop_flag = Arc::new(AtomicBool::new(false));
+            engine::spawn_click_loop(engine_clone, handle.clone(), stop_flag);
 
             register_hotkey(&handle, "F6").expect("Failed to register default hotkey");
 

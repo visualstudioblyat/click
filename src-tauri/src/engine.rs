@@ -1,10 +1,10 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use rand::Rng;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use tokio::time::{sleep, Duration};
 
 use crate::clicker::{self, MouseButton};
 use crate::keyboard;
@@ -466,147 +466,154 @@ fn execute_sequence_step(step: &SequenceStep, engine: &SharedEngine) {
     }
 }
 
-/// Main click loop — runs on a tokio task
-pub async fn run_click_loop(engine: SharedEngine, app: AppHandle) {
-    let mut candle_open = 0.0_f64;
-    let mut candle_high = 0.0_f64;
-    let mut candle_low = f64::MAX;
-    let mut candle_ticks = 0u32;
-    let candle_period = 25;
-    let mut telemetry_counter = 0u32;
-    let mut session_started = false;
-
-    loop {
-        let (should_run, interval_ms, config_snapshot) = {
-            let eng = engine.lock();
-            (
-                eng.running,
-                1000.0 / eng.config.target_cps.max(0.1),
-                eng.config.clone(),
-            )
-        };
-
-        if !should_run {
-            session_started = false;
-            sleep(Duration::from_millis(50)).await;
-            continue;
-        }
-
-        // Handle start delay
-        if !session_started {
-            session_started = true;
-            if config_snapshot.start_delay_ms > 0 {
-                sleep(Duration::from_millis(config_snapshot.start_delay_ms)).await;
-                // Re-check if still running after delay
-                if !engine.lock().running { continue; }
+/// Main click loop — runs on a dedicated OS thread with spin_sleep for precision.
+/// Windows default timer resolution is ~15.6ms which makes tokio::sleep useless
+/// for high CPS. We use timeBeginPeriod(1) + spin_sleep for sub-ms accuracy.
+pub fn spawn_click_loop(engine: SharedEngine, app: AppHandle, stop_flag: Arc<AtomicBool>) {
+    std::thread::Builder::new()
+        .name("click-engine".into())
+        .spawn(move || {
+            // Set Windows timer resolution to 1ms
+            #[cfg(windows)]
+            unsafe {
+                windows::Win32::Media::timeBeginPeriod(1);
             }
-        }
 
-        // Check stop_after_ms
-        if config_snapshot.stop_after_ms > 0 {
-            let elapsed = {
-                let eng = engine.lock();
-                Instant::now().duration_since(eng.session_start).as_millis() as u64
-            };
-            if elapsed >= config_snapshot.stop_after_ms {
-                let mut eng = engine.lock();
-                eng.running = false;
-                let _ = app.emit("engine-status", "idle");
-                continue;
-            }
-        }
+            let mut candle_open = 0.0_f64;
+            let mut candle_high = 0.0_f64;
+            let mut candle_low = f64::MAX;
+            let mut candle_ticks = 0u32;
+            let candle_period = 25;
+            let mut telemetry_counter = 0u32;
+            let mut session_started = false;
 
-        // Check repeat count
-        {
-            let eng = engine.lock();
-            if config_snapshot.repeat_mode == RepeatMode::Count && eng.tick_count >= config_snapshot.repeat_count {
-                drop(eng);
-                let mut eng = engine.lock();
-                eng.running = false;
-                let _ = app.emit("engine-status", "idle");
-                continue;
-            }
-        }
-
-        // Sequence mode: if sequence is non-empty and mode is "click", run sequence
-        if !config_snapshot.sequence.is_empty() && config_snapshot.mode == "click" {
-            for step in &config_snapshot.sequence {
-                if !engine.lock().running { break; }
-                execute_sequence_step(step, &engine);
-                if step.delay_ms > 0 {
-                    sleep(Duration::from_millis(step.delay_ms)).await;
+            loop {
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
                 }
-            }
-        } else {
-            // Normal mode dispatch
-            match config_snapshot.mode.as_str() {
-                "keyboard" => {
-                    let mut eng = engine.lock();
-                    eng.do_keyboard();
-                }
-                "hold" => {
-                    let mut eng = engine.lock();
-                    eng.do_hold();
-                }
-                "drag" => {
-                    let mut eng = engine.lock();
-                    eng.do_drag();
-                }
-                _ => {
-                    // "click" mode (default)
-                    let mut eng = engine.lock();
-                    eng.do_click();
-                }
-            }
-        }
 
-        // Emit telemetry every 5 ticks
-        telemetry_counter += 1;
-        if telemetry_counter >= 5 {
-            telemetry_counter = 0;
-            let telemetry = {
-                let mut eng = engine.lock();
-                eng.compute_telemetry()
-            };
-
-            let cps = telemetry.cps;
-
-            // Candle tracking
-            if candle_ticks == 0 {
-                candle_open = cps;
-                candle_high = cps;
-                candle_low = cps;
-            }
-            candle_high = candle_high.max(cps);
-            candle_low = candle_low.min(cps);
-            candle_ticks += 1;
-
-            if candle_ticks >= candle_period {
-                let candle = CandleData {
-                    time: chrono::Utc::now().timestamp(),
-                    open: candle_open,
-                    high: candle_high,
-                    low: candle_low,
-                    close: cps,
+                let (should_run, interval_ms, config_snapshot) = {
+                    let eng = engine.lock();
+                    (
+                        eng.running,
+                        1000.0 / eng.config.target_cps.max(0.1),
+                        eng.config.clone(),
+                    )
                 };
-                let _ = app.emit("candle", &candle);
-                candle_ticks = 0;
-                candle_high = 0.0;
-                candle_low = f64::MAX;
+
+                if !should_run {
+                    session_started = false;
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+
+                // Handle start delay
+                if !session_started {
+                    session_started = true;
+                    if config_snapshot.start_delay_ms > 0 {
+                        spin_sleep::sleep(Duration::from_millis(config_snapshot.start_delay_ms));
+                        if !engine.lock().running { continue; }
+                    }
+                }
+
+                // Check stop_after_ms
+                if config_snapshot.stop_after_ms > 0 {
+                    let elapsed = {
+                        let eng = engine.lock();
+                        Instant::now().duration_since(eng.session_start).as_millis() as u64
+                    };
+                    if elapsed >= config_snapshot.stop_after_ms {
+                        let mut eng = engine.lock();
+                        eng.running = false;
+                        let _ = app.emit("engine-status", "idle");
+                        continue;
+                    }
+                }
+
+                // Check repeat count
+                {
+                    let eng = engine.lock();
+                    if config_snapshot.repeat_mode == RepeatMode::Count && eng.tick_count >= config_snapshot.repeat_count {
+                        drop(eng);
+                        let mut eng = engine.lock();
+                        eng.running = false;
+                        let _ = app.emit("engine-status", "idle");
+                        continue;
+                    }
+                }
+
+                // Sequence mode
+                if !config_snapshot.sequence.is_empty() && config_snapshot.mode == "click" {
+                    for step in &config_snapshot.sequence {
+                        if !engine.lock().running { break; }
+                        execute_sequence_step(step, &engine);
+                        if step.delay_ms > 0 {
+                            spin_sleep::sleep(Duration::from_millis(step.delay_ms));
+                        }
+                    }
+                } else {
+                    // Normal mode dispatch
+                    match config_snapshot.mode.as_str() {
+                        "keyboard" => { engine.lock().do_keyboard(); }
+                        "hold" => { engine.lock().do_hold(); }
+                        "drag" => { engine.lock().do_drag(); }
+                        _ => { engine.lock().do_click(); }
+                    }
+                }
+
+                // Emit telemetry every 5 ticks
+                telemetry_counter += 1;
+                if telemetry_counter >= 5 {
+                    telemetry_counter = 0;
+                    let telemetry = {
+                        let mut eng = engine.lock();
+                        eng.compute_telemetry()
+                    };
+
+                    let cps = telemetry.cps;
+
+                    if candle_ticks == 0 {
+                        candle_open = cps;
+                        candle_high = cps;
+                        candle_low = cps;
+                    }
+                    candle_high = candle_high.max(cps);
+                    candle_low = candle_low.min(cps);
+                    candle_ticks += 1;
+
+                    if candle_ticks >= candle_period {
+                        let candle = CandleData {
+                            time: chrono::Utc::now().timestamp(),
+                            open: candle_open,
+                            high: candle_high,
+                            low: candle_low,
+                            close: cps,
+                        };
+                        let _ = app.emit("candle", &candle);
+                        candle_ticks = 0;
+                        candle_high = 0.0;
+                        candle_low = f64::MAX;
+                    }
+
+                    let _ = app.emit("telemetry", &telemetry);
+                }
+
+                // Precise sleep with jitter — spin_sleep handles sub-ms accuracy
+                let jitter = compute_jitter(
+                    &config_snapshot.jitter_distribution,
+                    interval_ms,
+                    config_snapshot.humanizer_enabled,
+                );
+                let sleep_ns = ((interval_ms + jitter).max(0.5) * 1_000_000.0) as u64;
+                spin_sleep::sleep(Duration::from_nanos(sleep_ns));
             }
 
-            let _ = app.emit("telemetry", &telemetry);
-        }
-
-        // Compute sleep with jitter
-        let jitter = compute_jitter(
-            &config_snapshot.jitter_distribution,
-            interval_ms,
-            config_snapshot.humanizer_enabled,
-        );
-        let sleep_ms = (interval_ms + jitter).max(1.0) as u64;
-        sleep(Duration::from_millis(sleep_ms)).await;
-    }
+            #[cfg(windows)]
+            unsafe {
+                windows::Win32::Media::timeEndPeriod(1);
+            }
+        })
+        .expect("failed to spawn click engine thread");
 }
 
 pub fn start_engine(engine: &SharedEngine, config: ClickConfig) {

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Card } from './Card';
+import { Mascot } from './Mascot';
 import { useClickStore } from '../store/clickStore';
 
 export function CpsChart() {
@@ -151,10 +153,36 @@ export function CpsChart() {
     }
   }, [cpsHistory, targetCps, status]);
 
+  const showMascot = cpsHistory.length < 2;
+
   return (
     <Card label="[CLICK TIMELINE]" delay={0.1} span="chart">
       <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
         <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0 }} />
+        <AnimatePresence>
+          {showMascot && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.4 }}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 12,
+              }}
+            >
+              <Mascot size={100} animate />
+              <span className="mono text-tertiary" style={{ fontSize: 10 }}>
+                PRESS F6 TO START
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </Card>
   );

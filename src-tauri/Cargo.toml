@@ -26,9 +26,11 @@ chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(windows)'.dependencies]
+spin_sleep = "1"
 windows = { version = "0.61", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_Threading",
     "Win32_Foundation",
+    "Win32_Media",
 ] }
