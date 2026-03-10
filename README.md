@@ -2,9 +2,10 @@
 
 ![screenshot](screenshot.png)
 
-An autoclicker for Windows, built with Tauri v2, React, and Rust.
+yo I built this for some random dude in valorant lfg
+its an autoclicker for windows, built with Tauri v2, React, and Rust.
 
-It does what OP Auto Clicker does but with a real UI -- live CPS charts, click heatmaps,
+It does what OP Auto Clicker does basically but with a real UI -- live CPS charts, click heatmaps,
 statistics, profiles, and anti-detection jitter (gaussian/poisson/uniform distributions).
 The clicking engine runs entirely in Rust on a dedicated thread with sub-ms precision timing.
 
