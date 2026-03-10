@@ -26,6 +26,7 @@ export function ProfilesPanel() {
   );
 
   const [name, setName] = useState('');
+  const [exported, setExported] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -57,6 +58,8 @@ export function ProfilesPanel() {
     a.download = 'click-profiles.json';
     a.click();
     URL.revokeObjectURL(url);
+    setExported(true);
+    setTimeout(() => setExported(false), 2000);
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -103,17 +106,19 @@ export function ProfilesPanel() {
             className="btn"
             whileTap={{ scale: 0.95 }}
             onClick={exportProfiles}
+            title="Save profiles to Downloads as JSON"
             style={{ flex: 1, fontSize: 9, padding: '4px 0', justifyContent: 'center' }}
           >
-            EXPORT
+            {exported ? 'SAVED TO DOWNLOADS' : 'EXPORT TO FILE'}
           </motion.button>
           <motion.button
             className="btn"
             whileTap={{ scale: 0.95 }}
             onClick={() => fileRef.current?.click()}
+            title="Load profiles from a JSON file"
             style={{ flex: 1, fontSize: 9, padding: '4px 0', justifyContent: 'center' }}
           >
-            IMPORT
+            IMPORT FROM FILE
           </motion.button>
           <input ref={fileRef} type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
         </div>
