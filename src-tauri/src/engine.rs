@@ -75,10 +75,15 @@ pub struct ClickConfig {
     pub drag_to_x: i32,
     #[serde(default)]
     pub drag_to_y: i32,
+    // Hover-click
+    #[serde(default = "default_hover_delay")]
+    pub hover_delay_ms: u64,
     // Sequence
     #[serde(default)]
     pub sequence: Vec<SequenceStep>,
 }
+
+fn default_hover_delay() -> u64 { 500 }
 
 fn default_jitter_distribution() -> String { "uniform".into() }
 fn default_mode() -> String { "click".into() }
@@ -126,6 +131,7 @@ impl Default for ClickConfig {
             hold_duration_ms: 0,
             drag_to_x: 0,
             drag_to_y: 0,
+            hover_delay_ms: 500,
             sequence: Vec::new(),
         }
     }
@@ -159,6 +165,11 @@ pub struct Engine {
 
     // Hold mode state machine
     hold_pressed_at: Option<Instant>,
+
+    // Hover-click tracking
+    last_cursor_pos: Option<(i32, i32)>,
+    cursor_still_since: Option<Instant>,
+    hover_clicked: bool,
 }
 
 impl Engine {
@@ -177,6 +188,9 @@ impl Engine {
             click_positions: Vec::new(),
             start_delay_done: false,
             hold_pressed_at: None,
+            last_cursor_pos: None,
+            cursor_still_since: None,
+            hover_clicked: false,
             config,
             running: false,
         }
@@ -280,6 +294,63 @@ impl Engine {
         let cps = self.measure_cps();
         self.update_stats(cps);
         self.tick_count += 1;
+    }
+
+    /// Returns true if a hover-click was fired this tick
+    fn do_hover_check(&mut self) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        use windows::Win32::Foundation::POINT;
+        let mut pt = POINT::default();
+        unsafe { let _ = GetCursorPos(&mut pt); }
+        let pos = (pt.x, pt.y);
+        let now = Instant::now();
+
+        let moved = match self.last_cursor_pos {
+            Some(last) => last != pos,
+            None => true,
+        };
+        self.last_cursor_pos = Some(pos);
+
+        if moved {
+            // Cursor moved — reset timer and allow clicking again
+            self.cursor_still_since = Some(now);
+            self.hover_clicked = false;
+            return false;
+        }
+
+        // Cursor is still
+        if self.hover_clicked {
+            return false; // already clicked for this stop
+        }
+
+        let still_since = self.cursor_still_since.get_or_insert(now);
+        let elapsed = now.duration_since(*still_since).as_millis() as u64;
+
+        if elapsed >= self.config.hover_delay_ms {
+            // Fire click
+            self.hover_clicked = true;
+
+            if let Some(last) = self.last_click_time {
+                let interval = now.duration_since(last).as_secs_f64() * 1000.0;
+                self.intervals.push(interval);
+                if self.intervals.len() > 256 { self.intervals.remove(0); }
+            }
+            self.last_click_time = Some(now);
+            self.clicks_in_window.push(now);
+
+            match self.config.click_type {
+                ClickType::Single => clicker::send_click_at(self.config.button, None),
+                ClickType::Double => clicker::send_double_click_at(self.config.button, None),
+            }
+
+            self.record_cursor_pos();
+            let cps = self.measure_cps();
+            self.update_stats(cps);
+            self.tick_count += 1;
+            return true;
+        }
+
+        false
     }
 
     fn hold_press(&mut self) {
@@ -588,6 +659,9 @@ pub fn spawn_click_loop(engine: SharedEngine, app: AppHandle, stop_flag: Arc<Ato
                     }
                 }
                         "drag" => { engine.lock().do_drag(); }
+                        "hover" => {
+                            engine.lock().do_hover_check();
+                        }
                         _ => { engine.lock().do_click(); }
                     }
                 }

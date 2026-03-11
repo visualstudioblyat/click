@@ -9,8 +9,9 @@ It does what OP Auto Clicker does basically but with a real UI -- live CPS chart
 statistics, profiles, and anti-detection jitter (gaussian/poisson/uniform distributions).
 The clicking engine runs entirely in Rust on a dedicated thread with sub-ms precision timing.
 
-Beyond basic auto-clicking, it supports keyboard mode, click-and-hold, drag automation,
-and multi-step sequences (chain clicks, keypresses, and waits together). You can save
+Beyond basic auto-clicking, it supports hover-click (auto-clicks when cursor stops moving),
+keyboard mode, click-and-hold, drag automation, and multi-step sequences (chain clicks,
+keypresses, and waits together). You can save
 and load profiles, import/export them as JSON, schedule start/stop times, and set position
 jitter so clicks aren't all landing on the exact same pixel.
 
@@ -35,7 +36,7 @@ npm run tauri build   # production build (.exe output)
 | Key | Action |
 |-----|--------|
 | F6 (default) | Toggle clicker on/off |
-| Ctrl+1/2/3/4 | Switch mode: click/keyboard/hold/drag |
+| Ctrl+1/2/3/4/5 | Switch mode: click/keyboard/hold/drag/hover |
 | Rebindable to F1-F12, any letter/number, Mouse4, Mouse5 |
 
 ## Stack

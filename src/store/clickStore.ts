@@ -70,6 +70,7 @@ const defaultConfig: ClickConfig = {
   mode: 'click',
   keyboard_key: '',
   hold_duration_ms: 100,
+  hover_delay_ms: 500,
   drag_to_x: 0,
   drag_to_y: 0,
   sequence: [],

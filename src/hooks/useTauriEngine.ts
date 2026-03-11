@@ -114,6 +114,7 @@ export function useTauriEngine() {
     config.mode,
     config.keyboard_key,
     config.hold_duration_ms,
+    config.hover_delay_ms,
     config.drag_to_x,
     config.drag_to_y,
     config.sequence,
@@ -129,6 +130,7 @@ export function useTauriEngine() {
         case '2': e.preventDefault(); store.setConfig({ mode: 'keyboard' }); break;
         case '3': e.preventDefault(); store.setConfig({ mode: 'hold' }); break;
         case '4': e.preventDefault(); store.setConfig({ mode: 'drag' }); break;
+        case '5': e.preventDefault(); store.setConfig({ mode: 'hover' }); break;
       }
     };
     window.addEventListener('keydown', handler);

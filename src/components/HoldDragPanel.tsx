@@ -6,7 +6,7 @@ import { useClickStore } from '../store/clickStore';
 import { useShallow } from 'zustand/react/shallow';
 
 const IS_TAURI = '__TAURI_INTERNALS__' in window;
-const MODES = ['click', 'hold', 'drag'] as const;
+const MODES = ['click', 'hold', 'drag', 'hover'] as const;
 
 const inputStyle = {
   background: 'var(--bg)',
@@ -89,6 +89,34 @@ export function HoldDragPanel() {
               <span className="mono text-tertiary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
                 = {(config.hold_duration_ms / 1000).toFixed(1)}s
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* Hover delay */}
+        {config.mode === 'hover' && (
+          <div>
+            <div className="mono text-secondary" style={{ fontSize: 10, marginBottom: 6 }}>
+              CLICK AFTER IDLE
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="number"
+                min={50}
+                max={10000}
+                step={50}
+                value={config.hover_delay_ms}
+                onChange={(e) => setConfig({ hover_delay_ms: Math.max(50, Number(e.target.value)) })}
+                className="mono"
+                style={{ ...inputStyle, flex: 1 }}
+              />
+              <span className="mono text-tertiary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
+                = {(config.hover_delay_ms / 1000).toFixed(1)}s
+              </span>
+            </div>
+            <div className="mono text-tertiary" style={{ fontSize: 9, marginTop: 6, lineHeight: 1.4 }}>
+              Clicks once when cursor stops moving for {config.hover_delay_ms}ms.
+              Uses {config.click_type === 'double' ? 'double' : 'single'} {config.button} click.
             </div>
           </div>
         )}

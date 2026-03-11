@@ -41,9 +41,10 @@ export interface ClickConfig {
   stop_after_ms: number;
   jitter_distribution: 'uniform' | 'gaussian' | 'poisson';
   position_jitter_radius: number;
-  mode: 'click' | 'keyboard' | 'hold' | 'drag';
+  mode: 'click' | 'keyboard' | 'hold' | 'drag' | 'hover';
   keyboard_key: string;
   hold_duration_ms: number;
+  hover_delay_ms: number;
   drag_to_x: number;
   drag_to_y: number;
   sequence: SequenceStep[];
